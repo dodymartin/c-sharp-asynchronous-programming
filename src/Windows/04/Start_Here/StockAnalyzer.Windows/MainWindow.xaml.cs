@@ -1,14 +1,12 @@
-﻿using Newtonsoft.Json;
-using StockAnalyzer.Core;
+﻿using StockAnalyzer.Core;
 using StockAnalyzer.Core.Domain;
 using StockAnalyzer.Core.Services;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -48,7 +46,8 @@ public partial class MainWindow : Window
         {
             cancellationTokenSource = new();
 
-            cancellationTokenSource.Token.Register(() => {
+            cancellationTokenSource.Token.Register(() =>
+            {
                 Notes.Text = "Cancellation requested";
             });
 
@@ -56,14 +55,49 @@ public partial class MainWindow : Window
 
             BeforeLoadingStockData();
 
+            var identifiers = StockIdentifier.Text.Split(',', ' ');
+
             var service = new StockService();
 
-            var data = await service.GetStockPricesFor(
-                StockIdentifier.Text,
-                cancellationTokenSource.Token
-            );
+            var loadingTasks = new List<Task<IEnumerable<StockPrice>>>();
+            var stocks = new ConcurrentBag<StockPrice>();
 
-            Stocks.ItemsSource = data;
+            foreach (var identifier in identifiers)
+            {
+                var loadTask = service.GetStockPricesFor(identifier,
+                    cancellationTokenSource.Token);
+
+                loadTask = loadTask.ContinueWith(t =>
+                {
+                    var aFewStocks = t.Result.Take(5);
+
+                    foreach (var stock in aFewStocks)
+                    {
+                        stocks.Add(stock);
+                    }
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        Stocks.ItemsSource = stocks.ToArray();
+                    });
+
+                    return aFewStocks;
+                });
+
+                loadingTasks.Add(loadTask);
+            }
+
+            var timeout = Task.Delay(20000);
+            var allStocksLoadingTask = Task.WhenAll(loadingTasks);
+
+            var firstCompleted = await Task.WhenAny(timeout,
+                allStocksLoadingTask);
+
+            if (firstCompleted == timeout)
+            {
+                cancellationTokenSource.Cancel();
+                throw new OperationCanceledException("Timeout!");
+            }
         }
         catch (Exception ex)
         {
@@ -91,7 +125,7 @@ public partial class MainWindow : Window
 
 
     private static Task<List<string>> SearchForStocks(
-        CancellationToken cancellationToken    
+        CancellationToken cancellationToken
     )
     {
         return Task.Run(async () =>
@@ -102,7 +136,7 @@ public partial class MainWindow : Window
 
             while (await stream.ReadLineAsync() is string line)
             {
-                if(cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -123,7 +157,7 @@ public partial class MainWindow : Window
 
             Stocks.ItemsSource = await responseTask;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             throw;
         }
