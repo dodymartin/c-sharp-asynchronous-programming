@@ -1,15 +1,13 @@
-﻿using Newtonsoft.Json;
-using StockAnalyzer.Core;
+﻿using StockAnalyzer.Core;
 using StockAnalyzer.Core.Domain;
 using StockAnalyzer.Core.Services;
+using StockAnalyzer.Windows.Services;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -34,15 +32,33 @@ public partial class MainWindow : Window
     {
         try
         {
-            var data = await GetStocksFor(StockIdentifier.Text);
+            BeforeLoadingStockData();
 
-            Notes.Text = "Stocks loaded!";
+            var identifiers = StockIdentifier.Text.Split(' ', ',');
+
+            var data = new ObservableCollection<StockPrice>();
 
             Stocks.ItemsSource = data;
+
+            var service = new StockDiskStreamService();
+            var enumerator = service.GetAllStockPrices();
+
+            await foreach (var price in enumerator
+                .WithCancellation(CancellationToken.None))
+            {
+                if (identifiers.Contains(price.Identifier))
+                {
+                    data.Add(price);
+                }
+            }
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             Notes.Text = ex.Message;
+        }
+        finally
+        {
+            AfterLoadingStockData();
         }
     }
 
@@ -53,7 +69,7 @@ public partial class MainWindow : Window
         var data = await service.GetStockPricesFor(identifier,
             CancellationToken.None).ConfigureAwait(false);
 
-        
+
 
         return data.Take(5);
     }
@@ -72,7 +88,7 @@ public partial class MainWindow : Window
 
 
     private static Task<List<string>> SearchForStocks(
-        CancellationToken cancellationToken    
+        CancellationToken cancellationToken
     )
     {
         return Task.Run(async () =>
@@ -83,7 +99,7 @@ public partial class MainWindow : Window
 
             while (await stream.ReadLineAsync() is string line)
             {
-                if(cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -104,7 +120,7 @@ public partial class MainWindow : Window
 
             Stocks.ItemsSource = await responseTask;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             throw;
         }
