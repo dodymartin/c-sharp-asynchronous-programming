@@ -1,21 +1,14 @@
-﻿using Newtonsoft.Json;
-using StockAnalyzer.Core;
+﻿using StockAnalyzer.Core;
 using StockAnalyzer.Core.Domain;
 using StockAnalyzer.Core.Services;
-using StockAnalyzer.Windows.Services;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Navigation;
 
 namespace StockAnalyzer.Windows;
@@ -33,28 +26,45 @@ public partial class MainWindow : Window
 
     CancellationTokenSource? cancellationTokenSource;
 
-    private void Search_Click(object sender, RoutedEventArgs e)
+    private async void Search_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            // NEVER DO THIS!
-            Task.Run(SearchForStocks).Wait();
+            BeforeLoadingStockData();
+            var progress = new Progress<IEnumerable<StockPrice>>();
+            progress.ProgressChanged += (_, stocks) =>
+            {
+                StockProgress.Value += 1;
+                Notes.Text += $"Loaded {stocks.Count()} for {stocks.First().Identifier}{Environment.NewLine}";
+            };
+
+            await SearchForStocks(progress);
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             Notes.Text = ex.Message;
         }
+        finally
+        {
+            AfterLoadingStockData();
+        }
     }
 
-    private async Task SearchForStocks()
+    private async Task SearchForStocks(IProgress<IEnumerable<StockPrice>> progress)
     {
         var service = new StockService();
         var loadingTasks = new List<Task<IEnumerable<StockPrice>>>();
 
-        foreach(var identifier in StockIdentifier.Text.Split(' ', ','))
+        foreach (var identifier in StockIdentifier.Text.Split(' ', ','))
         {
             var loadTask = service.GetStockPricesFor(identifier,
                 CancellationToken.None);
+
+            loadTask = loadTask.ContinueWith(completedTask =>
+            {
+                progress?.Report(completedTask.Result);
+                return completedTask.Result;
+            });
 
             loadingTasks.Add(loadTask);
         }
@@ -62,6 +72,25 @@ public partial class MainWindow : Window
         var data = await Task.WhenAll(loadingTasks);
 
         Stocks.ItemsSource = data.SelectMany(stock => stock);
+    }
+
+    private Task<IEnumerable<StockPrice>> SearchForStocks2()
+    {
+        var tcs = new TaskCompletionSource<IEnumerable<StockPrice>>();
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            var lines = File.ReadAllLines("StockPrices_Small.csv");
+            var prices = new List<StockPrice>();
+
+            foreach (var line in lines.Skip(1))
+            {
+                prices.Add(StockPrice.FromCSV(line));
+            }
+
+            tcs.SetResult(prices);
+        });
+
+        return tcs.Task;
     }
 
 
@@ -76,7 +105,7 @@ public partial class MainWindow : Window
     }
 
     private static Task<List<string>> SearchForStocks(
-        CancellationToken cancellationToken    
+        CancellationToken cancellationToken
     )
     {
         return Task.Run(async () =>
@@ -87,7 +116,7 @@ public partial class MainWindow : Window
 
             while (await stream.ReadLineAsync() is string line)
             {
-                if(cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -108,31 +137,19 @@ public partial class MainWindow : Window
 
             Stocks.ItemsSource = await responseTask;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             throw;
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     private void BeforeLoadingStockData()
     {
         stopwatch.Restart();
         StockProgress.Visibility = Visibility.Visible;
-        StockProgress.IsIndeterminate = true;
+        StockProgress.IsIndeterminate = false;
+        StockProgress.Value = 0;
+        StockProgress.Maximum = StockIdentifier.Text.Split(' ', ',').Length;
     }
 
     private void AfterLoadingStockData()
