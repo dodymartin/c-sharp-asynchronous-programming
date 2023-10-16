@@ -42,6 +42,28 @@ public partial class MainWindow : Window
                 { "AMAZ", Generate("AMAZ") }
             };
 
+        var bag = new ConcurrentBag<StockCalculation>();
+        //await Task.Run(() =>
+        //{
+        //    Parallel.Invoke(
+        //        () => { bag.Add(Calculate(stocks["MSFT"])); },
+        //        () => { bag.Add(Calculate(stocks["GOOGL"])); },
+        //        () => { bag.Add(Calculate(stocks["PS"])); },
+        //        () => { bag.Add(Calculate(stocks["AMAZ"])); }
+        //    );
+        //});
+
+        await Task.Run(() =>
+        {
+            Parallel.ForEach(stocks, stock =>
+            {
+                bag.Add(Calculate(stock.Value));
+            });
+        });
+
+
+        Stocks.ItemsSource = bag;
+
         AfterLoadingStockData();
     }
 
